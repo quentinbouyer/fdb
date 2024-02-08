@@ -11,6 +11,7 @@
 
 ## Made by Quentin Bouyer
 ## 2.0 Lot of correction due to modif of show pd output - change display
+## 2.1 Bug resolution when password is not needed
 
 
 use Data::Dumper;
@@ -22,14 +23,12 @@ my $tmp         = 60;
 my $activity    = "read";
 my $Debug       = 0;
 my $help        = 0;
-my $Version     = "2.0";
+my $Version     = "2.1";
 my $SFA_IPs     = "";
 my $user        = "user";
 my $passwd      = "user";
-my $short       = 0;
-my $write_c     = "";
-my $read_c      = "";
 my %hash;
+my $flag_ssh    = 0;
 
 ##
 # GetOptions
@@ -46,9 +45,6 @@ sub getCLOptions {
                                 'tmp|t=s'               => \$tmp,
                                 'user|u=s'              => \$user,
                                 'passwd|p=s'            => \$passwd,
-                                'short|s'               => \$short,
-                                'write_config|w=s'      => \$write_c,
-                                'read_conf|r=s'         => \$read_c,
                          )
               )
       {
@@ -64,7 +60,7 @@ sub print_help {
 
     print <<EOF;
 
-        Script name             : $0 - Chasing slow disks !
+        Script name             : fbd - Find Bad Disk
         Version                 : $Version
         Description             : This script will report you an output like a "show pd * counters" on DDN S2A products.
 
@@ -74,14 +70,11 @@ sub print_help {
 
         --debug | -d            Debug mode
 
-        --sfa_ips | -i          This option is a mandatory option that allow you to specify the IP Addresses of you controllers.
-                                The IP addresses must be separated by the dash caracter.
+        --sfa_ips | -i          This option is a mandatory option that allow you to specify the IP Addresses of your controller.
 
                                 Example :
 
-                                $0 -i "10.0.0.2-10.0.0.3"
-
-                                --> 10.0.0.2 is my sfa1 and 10.0.0.3 is the second sfa.
+                                fbd.pl -i 10.0.0.2
 
         --activity | -a         This option allows you to select if you want read or write delay values. Due to the current SFA OS
                                 architecture, you can't just have both. The default is read, for write use "-a write"
@@ -92,10 +85,6 @@ sub print_help {
 
         --password | -p         Password to use to login your controllers. Default is "user".
 
-        --write_conf | -w       Write the gathered configuration to a file - this will allow you to re-use the exact same config
-                                without to rescan the configuration - you'll save a couple of minutes each run.
-
-        --read_conf | -r        Read the exported dump from the "--write_conf" option.
 
         Contact : Quentin Bouyer ( quentin.bouyer\@eviden.com )
 
@@ -174,10 +163,22 @@ sub pd_all {
 }
 
 ##
-# Connection to our SFA(s)
+# Connection to SFA
 ##
 
-sub connect_to_sfa {
+sub connect_to_sfa_with_pass {
+
+        my $id = shift;
+        my $ssh = Net::SSH::Expect->new (
+                host => $hash{"sfa".$id},
+                password => $passwd,
+                user => $user,
+                raw_pty => 1);
+
+        return ($ssh);
+}
+
+sub connect_to_sfa_without_pass {
 
         my $id = shift;
         my $ssh = Net::SSH::Expect->new (
@@ -193,13 +194,24 @@ sub connect_to_sfa {
 # This function will initiate a login to the controller
 ##
 
-sub test_connect {
+sub test_connect_with_pass {
 
         my $ssh = shift;
 
         my $login_output = $ssh->login();
-        if ($login_output !~ /RAID\[\d\]\$/) {
-                die "Login has failed. Login output was $login_output";
+
+        return ($ssh);
+
+}
+
+sub test_connect_without_pass {
+
+        my $ssh = shift;
+
+        my $login_output = $ssh->run_ssh();
+
+        if ( $ssh->read_all(2) !~ /RAID\[\d\]\$/ )  {
+                $flag_ssh = 1;
         }
 
         return ($ssh);
@@ -323,43 +335,37 @@ sub getting_datas {
 }
 
 ##
-# Here is where we will talk with our SFA !
+# Here is where we will talk with the controler
 ##
 
 sub expecting {
 
         my @ssh;
 
-        unless ($read_c && -f $read_c) {
-                foreach my $sfa (1...$hash{"ctl"}) {
-                        $ssh[$sfa] = connect_to_sfa($sfa);
-                        $ssh[$sfa] = test_connect($ssh[$sfa]);
-                        if ($sfa == 1) {
-                                $ssh[$sfa] = filling_hash($ssh[$sfa]);
-                                $ssh[$sfa] = pd_all($ssh[$sfa]);
-                                $ssh[$sfa] = vd_pd($ssh[$sfa]);
-                        }
-                        $ssh[$sfa] = init_counters($ssh[$sfa]);
+        foreach my $sfa (1...$hash{"ctl"}) {
+
+                print "Try to connect without password\n";
+                $ssh[$sfa] = connect_to_sfa_without_pass($sfa);
+                $ssh[$sfa] = test_connect_without_pass($ssh[$sfa]);
+
+                if ( $flag_ssh ) {
+                        printf "Try to connect with password\n";
+                        $ssh[$sfa] = connect_to_sfa_with_pass($sfa);
+                        $ssh[$sfa] = test_connect_with_pass($ssh[$sfa]);
                 }
 
-                if ($write_c ne "") {
-                        store (\%hash, $write_c);
-                        print "Configuration dumped to file name ".$write_c."\n";
-                        print "Please use the option \"-r ".$write_c."\" to retore it.\n";
-                        exit;
+                if ($sfa == 1) {
+                        print "Connected on the SFA controler\n";
+                        $ssh[$sfa] = filling_hash($ssh[$sfa]);
+                        $ssh[$sfa] = pd_all($ssh[$sfa]);
+                        $ssh[$sfa] = vd_pd($ssh[$sfa]);
                 }
+
+                $ssh[$sfa] = init_counters($ssh[$sfa]);
+                $flag_ssh = 0;
         }
 
-        if ($read_c && -f $read_c) {
-                print "Reading the config file : ".$read_c." ... wait a moment please.\n";
-                my $hashret = retrieve($read_c);
-                %hash = %{$hashret};
-                foreach my $sfa (1...$hash{"ctl"}) {
-                        $ssh[$sfa] = connect_to_sfa($sfa);
-                        $ssh[$sfa] = test_connect($ssh[$sfa]);
-                        $ssh[$sfa] = init_counters($ssh[$sfa]);
-                }
-        }
+
         print "Now waiting for ".$tmp." seconds ...\n";
         sleep($tmp);
 
@@ -387,7 +393,7 @@ sub main {
                 exit 1;
         }
         $Debug = "DEBUG" if ( $Debug );
-        parsing_ips unless ($read_c);
+        parsing_ips;
         expecting;
         flushing;
 }
