@@ -6,7 +6,7 @@
 $ ./fbd.pl
 
          Script name             : fbd - Find Bad Disk
-        Version                 : 2.1
+        Version                 : 2.3
         Description             : This script will report you an output like a "show pd * counters" on DDN S2A products.
 
       Options:
