@@ -12,6 +12,8 @@
 ## Made by Quentin Bouyer
 ## 2.0 Lot of correction due to modif of show pd output - change display
 ## 2.1 Bug resolution when password is not needed
+## 2.2 Bug resolution when a disk is in unknown state
+## 2.3 take in charge NVME disk
 
 
 use Data::Dumper;
@@ -23,7 +25,7 @@ my $tmp         = 60;
 my $activity    = "read";
 my $Debug       = 0;
 my $help        = 0;
-my $Version     = "2.1";
+my $Version     = "2.3";
 my $SFA_IPs     = "";
 my $user        = "user";
 my $passwd      = "user";
@@ -102,19 +104,24 @@ sub flushing {
                 print "PD(Idx)\t\tAVG(us)\t\t4ms\t8ms\t16ms\t32ms\t64ms\t128ms\t256ms\t512ms\t1024ms\t4096ms\t+4096ms\n";
                 foreach my $id (1...$hash{"ctl"}) {
                         foreach my $pd (sort {$a <=> $b} keys(%{$hash{"vd"}{$vd}{"pd_list"}})) {
-                                print $hash{"vd"}{$vd}{"pd_list"}{$pd};
-                                print "\t\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{"AVG(ms)"};
-                                print "\t\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{4};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{8};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{16};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{32};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{64};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{128};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{256};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{512};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{1024};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{4096};
-                                print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{+4096}."\n";
+                                if ( $hash{"vd"}{$vd}{"pd_list"}{$pd} !~ /F/ ) {
+                                        print $hash{"vd"}{$vd}{"pd_list"}{$pd};
+                                        print "\t\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{"AVG(ms)"};
+                                        print "\t\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{4};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{8};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{16};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{32};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{64};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{128};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{256};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{512};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{1024};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{4096};
+                                        print "\t".$hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{+4096}."\n";
+                                }
+                                else {
+                                        #print "Disque Failed or Unknown\n";
+                                }
                         }
                 }
                 print "\n";
@@ -248,15 +255,17 @@ sub filling_hash {
                         $line =~ s/\r//;
                         my @tmp = split(/ +/, $line);
 
+                        #print "tmp = vd $tmp[1] name = $tmp[2]\n";
                         $hash{"vd"}{$tmp[1]}{"name"} = $tmp[2];
 
+                        #print "tmp = vd $tmp[1] pool = $tmp[4]\n";
                         $hash{"vd"}{$tmp[1]}{"pool"} = $tmp[4];
 
+                        #print "tmp = vd $tmp[1] raid = $tmp[5]\n";
                         $hash{"vd"}{$tmp[1]}{"raid"} = $tmp[5];
                 }
                 $flag++ if ($line =~ /-{80}/);
         }
-
         return ($ssh);
 }
 
@@ -282,10 +291,16 @@ sub vd_pd {
 
                                 my @tmp = split(/ +/, $line);
 
-                                if ($line =~ /SSD/ ) {
-                                        $hash{"vd"}{$vd}{"pd_list"}{$pdid} = $tmp[15];
-                                } else {
-                                        $hash{"vd"}{$vd}{"pd_list"}{$pdid} = $tmp[14];
+                                #BUG des disques en erreur ...
+                                if ($line !~ /UNK/ ) {
+                                        if ($line =~ /SSD/ && $line !~ /NVME/ ) {
+                                                $hash{"vd"}{$vd}{"pd_list"}{$pdid} = $tmp[15];
+                                        } else {
+                                                $hash{"vd"}{$vd}{"pd_list"}{$pdid} = $tmp[14];
+                                        }
+                                }
+                                else {
+                                        $hash{"vd"}{$vd}{"pd_list"}{$pdid} = "F";
                                 }
                                 $pdid++;
                         }
@@ -315,14 +330,17 @@ sub getting_datas {
                 if ($flag) {
                         $line =~ s/\r//;
                         my @tmp_delay = split(/ +/, $line);
+
                         foreach my $vd (sort {$a <=> $b} keys(%{$hash{"vd"}})) {
                                 foreach my $pd (sort {$a <=> $b} keys(%{$hash{"vd"}{$vd}{"pd_list"}})) {
-                                        if ($tmp_delay[1] eq $hash{"vd"}{$vd}{"pd_list"}{$pd}) {
-                                                $hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{"AVG(ms)"} = $tmp_delay[2];
-                                                $hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{"+4096"} =  $tmp_delay[14];
-                                                foreach my $t (3...13) {
+                                        if ( $pd !~ /F/ ) {
+                                                if ($tmp_delay[1] eq $hash{"vd"}{$vd}{"pd_list"}{$pd}) {
+                                                        $hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{"AVG(ms)"} = $tmp_delay[2];
+                                                        $hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{"+4096"} =  $tmp_delay[14];
+                                                        foreach my $t (3...13) {
                                                                 my $h = 2 ** ($t - 1);
                                                                 $hash{"vd"}{$vd}{"pd_list"}{$pd}{$id}{$h} = $tmp_delay[$t];
+                                                        }
                                                 }
                                         }
                                 }
