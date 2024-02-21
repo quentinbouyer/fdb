@@ -6,14 +6,12 @@
 $ ./fbd.pl
 
          Script name             : fbd - Find Bad Disk
-        Version                 : 2.3
-        Description             : This script will report you an output like a "show pd * counters" on DDN S2A products.
+        Version                 : 2.5
+        Description             : This script will report you an output like a "show pd * counters" for mechanical disks on DDN SFA products.
 
       Options:
 
         --help  | -h            Print this help.
-
-        --debug | -d            Debug mode
 
         --sfa_ips | -i          This option is a mandatory option that allow you to specify the IP Addresses of your controller.
 
@@ -29,6 +27,8 @@ $ ./fbd.pl
         --user | -u             User to use to login your controllers. Default is "user".
 
         --password | -p         Password to use to login your controllers. Default is "user".
+		
+		--ssd | -s              show stats for mechanical disk AND SSD ( only mechanical disk by default ).
 
 
         Contact : Quentin Bouyer ( quentin.bouyer@eviden.com )
